@@ -181,11 +181,37 @@ for fold, (train_idx, val_idx) in enumerate(tscv.split(X)):
 
     # 9.6. Предсказываем уже откалиброванную вероятность
     y_pred = calibrator.predict_proba(X_val)[:, 1]
-    roc = roc_auc_score(y_val, y_pred)
-    prec, rec, _ = precision_recall_curve(y_val, y_pred)
-    pr_auc = auc(rec, prec)
 
-    print(f"Fold {fold+1}: Calibrated ROC AUC={roc:.4f}, PR AUC={pr_auc:.4f}")
+    # 9.7. Threshold tuning: ищем порог, который даёт максимальное F1 на валидации
+    from sklearn.metrics import precision_recall_curve
+
+    precisions, recalls, thresholds = precision_recall_curve(y_val, y_pred)
+    # F1 = 2 * P * R / (P + R); thresholds[i] соответствует паре (precisions[i], recalls[i])
+    f1_scores = 2 * precisions * recalls / (precisions + recalls + 1e-8)
+
+    # последний элемент precisions/recalls не имеет threshold, поэтому убираем его
+    best_idx = f1_scores[:-1].argmax()
+    best_threshold = thresholds[best_idx]
+    best_f1 = f1_scores[best_idx]
+    best_prec = precisions[best_idx]
+    best_rec = recalls[best_idx]
+
+    print(
+        f"Fold {fold+1}: best p_min={best_threshold:.4f} "
+        f"(precision={best_prec:.3f}, recall={best_rec:.3f}, F1={best_f1:.3f})"
+    )
+
+    # 9.8. Считаем метрики при этом пороге, если надо
+    y_pred_label = (y_pred >= best_threshold).astype(int)
+    # например, точность классификации:
+    # from sklearn.metrics import accuracy_score
+    # acc = accuracy_score(y_val, y_pred_label)
+    # print(f"Fold {fold+1}: accuracy@p_min = {acc:.3f}")
+
+    # В любом случае сохраняем ROC AUC и PR AUC
+    roc = roc_auc_score(y_val, y_pred)
+    pr_auc = auc(recalls, precisions)
+
     aucs.append(roc)
     pr_aucs.append(pr_auc)
 
