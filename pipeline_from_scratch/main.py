@@ -173,7 +173,7 @@ for fold, (train_idx, val_idx) in enumerate(tscv.split(X)):
     from sklearn.calibration import CalibratedClassifierCV
 
     calibrator = CalibratedClassifierCV(
-        base_estimator=clf,
+        estimator=clf,      # <-- заменили base_estimator на estimator
         method="isotonic",  # или "sigmoid"
         cv="prefit"
     )
@@ -188,7 +188,6 @@ for fold, (train_idx, val_idx) in enumerate(tscv.split(X)):
     print(f"Fold {fold+1}: Calibrated ROC AUC={roc:.4f}, PR AUC={pr_auc:.4f}")
     aucs.append(roc)
     pr_aucs.append(pr_auc)
-
 
 print(f"\nMean ROC AUC: {np.mean(aucs):.4f} ± {np.std(aucs):.4f}")
 print(f"Mean PR  AUC: {np.mean(pr_aucs):.4f} ± {np.std(pr_aucs):.4f}")
