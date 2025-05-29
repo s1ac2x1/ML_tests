@@ -22,7 +22,7 @@ def setup_console_logger():
     logger.addHandler(ch)
     return logger
 
-def fetch_yahoo_data(ticker, logger, start_year=2005):
+def fetch_yahoo_data(ticker, logger, start_year=2014):
     all_data = []
     end_year = datetime.now().year
     interval_years = 3
@@ -59,7 +59,7 @@ def fetch_yahoo_data(ticker, logger, start_year=2005):
 def main():
     logger = setup_console_logger()
 
-    tickers_file = "tickers.txt"
+    tickers_file = "../tickers.txt"
     if not os.path.exists(tickers_file):
         logger.error(f"Файл {tickers_file} не найден.")
         return

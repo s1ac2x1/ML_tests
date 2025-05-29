@@ -11,7 +11,7 @@ import optuna
 import warnings
 
 # === Параметры ===
-INPUT_CSV      = "AES.csv"        # ← замените на своё имя файла
+INPUT_CSV      = "AES_daily.csv"        # ← замените на своё имя файла
 NAN_THRESHOLD  = 0.3               # максимально допустимая доля NaN в признаке
 TEST_SIZE      = 0.2               # доля тестовой выборки
 OPTUNA_TRIALS  = 50                # количество испытаний Optuna

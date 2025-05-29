@@ -1,3 +1,4 @@
 !pip install pandas_ta xgboost optuna scikit-learn joblib
 !pip install pandas==1.5.3 --force-reinstall
 !pip install numpy==1.23.5 --force-reinstall
+!pip install backtrader matplotlib

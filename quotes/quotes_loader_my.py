@@ -13,7 +13,7 @@ CHUNK_YEARS     = 2                      # size of each slice in years
 REQUEST_TIMEOUT = 15                     # seconds for HTTP timeout
 DELAY_BETWEEN   = 3                      # seconds between tickers
 PAUSE_BETWEEN_CHUNKS = 1                # seconds between chunk requests
-OUTPUT_DIR      = "."                    # where to save "<TICKER>_quotes.txt"
+OUTPUT_DIR      = ".."  # where to save "<TICKER>_quotes.txt"
 
 TZ_NATIVE = ZoneInfo("US/Eastern")       # exchange local time
 TZ_MY     = ZoneInfo("Europe/Berlin")    # your local time
