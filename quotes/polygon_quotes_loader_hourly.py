@@ -4,7 +4,7 @@ import time
 
 # === НАСТРОЙКИ ===
 API_KEY = "9j_C_F8fB29lulKXPysa3kSlLyuLSq_M"  # 🔑 вставь сюда свой API-ключ
-symbol = "AES"
+symbol = "DB"
 from_date = "2015-01-01"
 to_date = "2025-01-01"
 timespan = "hour"

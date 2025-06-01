@@ -42,7 +42,7 @@ from pathlib import Path
 # CONFIGURATION
 # ---------------------------------------------------------------------------
 CONFIG = {
-    "FILE_PATH": "AES_h.csv",  # path to hourly data CSV
+    "FILE_PATH": "your_hourly_file.csv",  # path to hourly data CSV
     "initial_capital": 100_000,            # starting cash for back‑test
     "risk_per_trade": 0.02,               # 2% of equity per trade
     # MACD parameters (weekly)
@@ -57,7 +57,7 @@ CONFIG = {
     "stoch_oversold": 20,
     # ATR parameters (hourly)
     "atr_period": 14,
-    "atr_mult_stop": 2.0,                 # stop‑loss = ATR * N
+    "atr_mult_stop": 3.0,                 # stop‑loss = ATR * N
     # Commissions & slippage
     "commission_perc": 0.0005,            # 0.05% each trade leg
 }
