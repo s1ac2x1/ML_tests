@@ -31,7 +31,7 @@ from pathlib import Path
 # CONFIGURATION
 # ---------------------------------------------------------------------------
 CONFIG = {
-    "FILE_PATH": "DB.csv",  # path to hourly data CSV
+    "FILE_PATH": "ABC.csv",  # path to hourly data CSV
     "initial_capital": 10_000,             # start with 10k USD
     "risk_per_trade": 0.02,               # 2 % of equity each trade
     # MACD params (weekly)
