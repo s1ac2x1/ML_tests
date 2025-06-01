@@ -187,8 +187,13 @@ print(f"Final equity: {df['equity'].iloc[-1]:.4f}")
 print(f"Sharpe (annualized): {sharpe:.2f}")
 print(f"Max drawdown: {dd.min():.2%}")
 
-plt.figure(figsize=(12,4))
-plt.plot(df["equity"], label="Equity")
-plt.fill_between(dd.index, dd, 0, color="red", alpha=0.3, label="Drawdown")
-plt.legend(); plt.title("Backtest Results")
-plt.show()
+entry_dates = df.index[df["entry"]]
+print("Long entries opened at:")
+for dt in entry_dates:
+    print(dt.strftime("%Y-%m-%d %H:%M:%S"))
+
+# plt.figure(figsize=(12,4))
+# plt.plot(df["equity"], label="Equity")
+# plt.fill_between(dd.index, dd, 0, color="red", alpha=0.3, label="Drawdown")
+# plt.legend(); plt.title("Backtest Results")
+# plt.show()
