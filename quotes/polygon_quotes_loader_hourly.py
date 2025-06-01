@@ -47,7 +47,7 @@ if not df.empty:
         'v': 'volume'
     })
     df = df[['datetime', 'open', 'high', 'low', 'close', 'volume']]
-    df.to_csv(f"{symbol}_hourly_data.csv", index=False)
-    print(f"✅ Сохранено {len(df)} строк в файл {symbol}_hourly_data.csv")
+    df.to_csv(f"{symbol}.csv", index=False)
+    print(f"✅ Сохранено {len(df)} строк в файл {symbol}.csv")
 else:
     print("❌ Нет данных получено.")
