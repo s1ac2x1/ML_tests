@@ -1,36 +1,25 @@
 """
-Elder Triple Screen trading system — full back‑test implementation
----------------------------------------------------------------
-*   **Time‑frames:**
-        1. Weekly   (first screen – trend filter)
-        2. Daily    (second screen – oscillator correction)
-        3. Hourly   (third screen – trigger / execution)
-*   **Indicators used (defaults can be changed):**
-        • Weekly MACD histogram   – trend direction  (bullish > 0, bearish < 0)
-        • Daily Stochastic (14,3,3)  – oversold / overbought
-        • Hourly ATR(14)           – initial & trailing stop
+Elder Triple Screen trading system — **long‑only, soft‑trailing** back‑test
+===========================================================================
+This version implements the user‑requested tweaks:
+
+*   Only **long** positions (shorts отключены).
+*   Start capital ← **10 000 $**.
+*   Daily Stochastic levels moved to **30 / 70** (чуть чаще коррекции).
+*   Initial protective stop = **ATR × 2**; after цена проходит **+1 R**, включается
+    трейлинг‑стоп (ATR × 2 от последней цены).
+*   Выход по тренду — когда недельная MACD‑гистограмма ≤ 0 (раньше, чем по
+    классическому «смена знака» для лонгов).
 
 Data requirements
 -----------------
-A CSV file with **hourly OHLCV** data for a single instrument,
-containing at least the following columns and a header row:
-    datetime, open, high, low, close, volume
-The script will read     ``your_hourly_file.csv``.  Change the path or add
-CLI arguments if needed.
-
-Libraries:  pandas, numpy, matplotlib (for the optional equity curve plot).
-Install with:
-    pip install pandas numpy matplotlib
+CSV with **hourly** OHLCV for a single instrument, columns:
+    `datetime, open, high, low, close, volume`
 
 Run:
-    python elder_triple_screen_backtest.py  # after editing the FILE_PATH constant
-
+    python elder_triple_screen_backtest.py  (после указания пути к CSV)
 Outputs:
-    • Summary statistics printed to console
-    • equity_curve.png — cumulative equity curve (optional)
-    • trades.csv       — detailed log of all closed trades
-
-Feel free to tweak parameters in the CONFIG dictionary near the top.
+    `trades.csv`, `equity_curve.csv`, `equity_curve.png`, консольная сводка.
 """
 
 import pandas as pd
@@ -43,23 +32,23 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 CONFIG = {
     "FILE_PATH": "your_hourly_file.csv",  # path to hourly data CSV
-    "initial_capital": 100_000,            # starting cash for back‑test
-    "risk_per_trade": 0.02,               # 2% of equity per trade
-    # MACD parameters (weekly)
+    "initial_capital": 10_000,             # start with 10k USD
+    "risk_per_trade": 0.02,               # 2 % of equity each trade
+    # MACD params (weekly)
     "macd_fast": 12,
     "macd_slow": 26,
     "macd_signal": 9,
-    # Stochastic parameters (daily)
+    # Stochastic params (daily)
     "stoch_k": 14,
     "stoch_d": 3,
     "stoch_smooth": 3,
-    "stoch_overbought": 80,
-    "stoch_oversold": 20,
-    # ATR parameters (hourly)
+    "stoch_oversold": 30,
+    "stoch_overbought": 70,               # not used but kept
+    # ATR (hourly)
     "atr_period": 14,
-    "atr_mult_stop": 3.0,                 # stop‑loss = ATR * N
-    # Commissions & slippage
-    "commission_perc": 0.0005,            # 0.05% each trade leg
+    "atr_mult_stop": 2.0,                 # initial & trailing = ATR*2
+    # Commission
+    "commission_perc": 0.0005,            # 0.05 % per leg
 }
 
 # ---------------------------------------------------------------------------
@@ -74,6 +63,7 @@ def macd(close: pd.Series, fast: int, slow: int, signal: int):
     macd_hist = macd_line - macd_signal
     return macd_line, macd_signal, macd_hist
 
+
 def stochastic(high: pd.Series, low: pd.Series, close: pd.Series, k_period: int, d_period: int, smooth: int):
     lowest_low = low.rolling(window=k_period).min()
     highest_high = high.rolling(window=k_period).max()
@@ -81,6 +71,7 @@ def stochastic(high: pd.Series, low: pd.Series, close: pd.Series, k_period: int,
     k = k_raw.rolling(window=smooth).mean()
     d = k.rolling(window=d_period).mean()
     return k, d
+
 
 def atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int):
     prev_close = close.shift(1)
@@ -99,7 +90,6 @@ def load_data(path: str) -> pd.DataFrame:
     df = pd.read_csv(path, parse_dates=["datetime"])
     df.set_index("datetime", inplace=True)
     df = df.sort_index()
-    # Ensure the dataframe has required columns
     required = {"open", "high", "low", "close"}
     missing = required - set(df.columns)
     if missing:
@@ -108,191 +98,112 @@ def load_data(path: str) -> pd.DataFrame:
 
 
 def resample_ohlc(df: pd.DataFrame, rule: str) -> pd.DataFrame:
-    """Resample to rule (e.g. 'D', 'W-FRI') returning full OHLCV."""
-    ohlc_dict = {
+    agg = {
         "open": "first",
         "high": "max",
         "low": "min",
         "close": "last",
         "volume": "sum",
     }
-    return df.resample(rule, label="right", closed="right").agg(ohlc_dict).dropna()
+    return df.resample(rule, label="right", closed="right").agg(agg).dropna()
 
 # ---------------------------------------------------------------------------
 # BACK‑TEST ENGINE
 # ---------------------------------------------------------------------------
 class TripleScreenBacktester:
-    def __init__(self, hourly: pd.DataFrame, config: dict):
+    def __init__(self, hourly: pd.DataFrame, cfg: dict):
         self.hourly = hourly.copy()
-        self.cfg = config
+        self.cfg = cfg
         self.prepare_frames()
-        self.trades = []  # list of dicts for each completed trade
+        self.trades = []
 
-    # ---------------------------------------------------------
     def prepare_frames(self):
-        # Weekly frame (first screen)
-        self.weekly = resample_ohlc(self.hourly, "W-FRI")
-        _, _, self.weekly["macd_hist"] = macd(
-            self.weekly["close"],
-            self.cfg["macd_fast"],
-            self.cfg["macd_slow"],
-            self.cfg["macd_signal"],
+        # Weekly MACD
+        weekly = resample_ohlc(self.hourly, "W-FRI")
+        _, _, weekly["macd_hist"] = macd(
+            weekly["close"], self.cfg["macd_fast"], self.cfg["macd_slow"], self.cfg["macd_signal"]
         )
-        # Daily frame (second screen)
-        self.daily = resample_ohlc(self.hourly, "D")
+        # Daily Stochastic
+        daily = resample_ohlc(self.hourly, "D")
         k, d = stochastic(
-            self.daily["high"],
-            self.daily["low"],
-            self.daily["close"],
-            self.cfg["stoch_k"],
-            self.cfg["stoch_d"],
-            self.cfg["stoch_smooth"],
+            daily["high"], daily["low"], daily["close"],
+            self.cfg["stoch_k"], self.cfg["stoch_d"], self.cfg["stoch_smooth"]
         )
-        self.daily["stoch_k"] = k
-        self.daily["stoch_d"] = d
-        # ATR on hourly
+        daily["stoch_k"] = k
+        # Hourly ATR
         self.hourly["atr"] = atr(
-            self.hourly["high"],
-            self.hourly["low"],
-            self.hourly["close"],
-            self.cfg["atr_period"],
+            self.hourly["high"], self.hourly["low"], self.hourly["close"], self.cfg["atr_period"]
         )
-        # Map weekly & daily indicators down to hourly rows via reindex + ffill
-        self.hourly = self.hourly.join(self.weekly["macd_hist"].rename("macd_hist"), how="left").ffill()
-        self.hourly = self.hourly.join(self.daily[["stoch_k", "stoch_d"]], how="left").ffill()
+        # Merge
+        self.hourly = self.hourly.join(weekly["macd_hist"], how="left").ffill()
+        self.hourly = self.hourly.join(daily[["stoch_k"]], how="left").ffill()
 
     # ---------------------------------------------------------
     def run(self):
         equity = self.cfg["initial_capital"]
-        position = 0       # +1 long, -1 short, 0 flat
-        entry_price = np.nan
-        stop_price = np.nan
-        quantity = 0
-        peak_equity = equity
+        position = 0             # 0 flat, 1 long
+        entry_px = stop_px = qty = np.nan
+        r_value = np.nan         # risk per share
+        trail_active = False
         equity_curve = []
 
-        data = self.hourly.itertuples()
-        for bar in data:
+        for bar in self.hourly.itertuples():
             dt = bar.Index
-            price_o = bar.open
-            price_h = bar.high
-            price_l = bar.low
-            price_c = bar.close
+            o, h, l, c = bar.open, bar.high, bar.low, bar.close
             atr_val = bar.atr
             macd_hist = bar.macd_hist
             stoch_k = bar.stoch_k
-            # Determine bias from first screen
-            trend = "bull" if macd_hist > 0 else "bear"
-            # Determine daily oscillator status
-            daily_signal = None
-            if stoch_k < self.cfg["stoch_oversold"]:
-                daily_signal = "oversold"
-            elif stoch_k > self.cfg["stoch_overbought"]:
-                daily_signal = "overbought"
-            # ----------------------------------------------------------------
-            # ENTRY LOGIC (third screen)
-            # ----------------------------------------------------------------
-            if position == 0 and not np.isnan(atr_val):
-                risk_cash = equity * self.cfg["risk_per_trade"]
-                if trend == "bull" and daily_signal == "oversold":
-                    # Buy stop: break above previous bar high
-                    prev_high = self.hourly.loc[:dt].iloc[-2].high if len(self.hourly.loc[:dt]) > 1 else np.nan
-                    if price_h > prev_high and price_c > prev_high:
-                        entry_price = prev_high
-                        stop_price = entry_price - self.cfg["atr_mult_stop"] * atr_val
-                        quantity = risk_cash / (entry_price - stop_price)
-                        commission = entry_price * quantity * self.cfg["commission_perc"]
-                        equity -= commission
-                        position = +1
-                        self.trades.append({
-                            "entry_dt": dt,
-                            "direction": "LONG",
-                            "entry_px": entry_price,
-                            "size": quantity,
-                            "entry_commission": commission,
-                        })
-                        continue  # move to next bar
-                elif trend == "bear" and daily_signal == "overbought":
-                    # Sell stop: break below previous bar low
-                    prev_low = self.hourly.loc[:dt].iloc[-2].low if len(self.hourly.loc[:dt]) > 1 else np.nan
-                    if price_l < prev_low and price_c < prev_low:
-                        entry_price = prev_low
-                        stop_price = entry_price + self.cfg["atr_mult_stop"] * atr_val
-                        quantity = risk_cash / (stop_price - entry_price)
-                        commission = entry_price * quantity * self.cfg["commission_perc"]
-                        equity -= commission
-                        position = -1
-                        self.trades.append({
-                            "entry_dt": dt,
-                            "direction": "SHORT",
-                            "entry_px": entry_price,
-                            "size": quantity,
-                            "entry_commission": commission,
-                        })
-                        continue
 
-            # ----------------------------------------------------------------
-            # POSITION MANAGEMENT
-            # ----------------------------------------------------------------
-            if position != 0:
-                # Update trailing stop
-                if position == 1:
-                    # Long – trail stop with highest close – ATR*mult
-                    stop_price = max(stop_price, price_h - self.cfg["atr_mult_stop"] * atr_val)
-                    exit_reason = None
-                    if price_l <= stop_price:
-                        exit_price = stop_price
-                        exit_reason = "stop"
-                    elif trend == "bear":
-                        exit_price = price_c
-                        exit_reason = "trend_flip"
-                    else:
-                        exit_price = None
-                    if exit_price is not None:
-                        commission = exit_price * quantity * self.cfg["commission_perc"]
-                        pnl = (exit_price - entry_price) * quantity - commission - self.trades[-1]["entry_commission"]
-                        equity += pnl
-                        self.trades[-1].update({
-                            "exit_dt": dt,
-                            "exit_px": exit_price,
-                            "exit_commission": commission,
-                            "pnl": pnl,
-                            "exit_reason": exit_reason,
-                        })
-                        position = 0
-                        entry_price = np.nan
-                        stop_price = np.nan
-                        quantity = 0
+            bull_trend = macd_hist > 0            # filter
+            oversold = stoch_k < self.cfg["stoch_oversold"]
 
-                elif position == -1:
-                    # Short – trail stop with lowest close + ATR*mult
-                    stop_price = min(stop_price, price_l + self.cfg["atr_mult_stop"] * atr_val)
-                    exit_reason = None
-                    if price_h >= stop_price:
-                        exit_price = stop_price
-                        exit_reason = "stop"
-                    elif trend == "bull":
-                        exit_price = price_c
-                        exit_reason = "trend_flip"
-                    else:
-                        exit_price = None
-                    if exit_price is not None:
-                        commission = exit_price * quantity * self.cfg["commission_perc"]
-                        pnl = (entry_price - exit_price) * quantity - commission - self.trades[-1]["entry_commission"]
-                        equity += pnl
-                        self.trades[-1].update({
-                            "exit_dt": dt,
-                            "exit_px": exit_price,
-                            "exit_commission": commission,
-                            "pnl": pnl,
-                            "exit_reason": exit_reason,
-                        })
-                        position = 0
-                        entry_price = np.nan
-                        stop_price = np.nan
-                        quantity = 0
+            # -------------------- ENTRY --------------------
+            if position == 0 and bull_trend and oversold and not np.isnan(atr_val):
+                prev_high = self.hourly.loc[:dt].iloc[-2].high if len(self.hourly.loc[:dt]) > 1 else np.nan
+                if h > prev_high and c > prev_high:   # trigger
+                    risk_cash = equity * self.cfg["risk_per_trade"]
+                    entry_px = prev_high
+                    stop_px = entry_px - self.cfg["atr_mult_stop"] * atr_val
+                    r_value = entry_px - stop_px
+                    qty = risk_cash / r_value
+                    commission = entry_px * qty * self.cfg["commission_perc"]
+                    equity -= commission
+                    position = 1
+                    trail_active = False
+                    self.trades.append({
+                        "entry_dt": dt, "entry_px": entry_px, "size": qty, "entry_commission": commission
+                    })
+                    continue
 
-            peak_equity = max(peak_equity, equity)
+            # ----------------- POSITION MGT -----------------
+            if position == 1:
+                # Activate trailing after +1R move
+                if not trail_active and (c - entry_px) >= r_value:
+                    trail_active = True
+                if trail_active:
+                    stop_px = max(stop_px, c - self.cfg["atr_mult_stop"] * atr_val)
+
+                exit_flag = None
+                if l <= stop_px:
+                    exit_px = stop_px
+                    exit_flag = "stop_hit"
+                elif macd_hist <= 0:               # weekly trend gone
+                    exit_px = c
+                    exit_flag = "trend_flip"
+                else:
+                    exit_px = None
+
+                if exit_px is not None:
+                    commission = exit_px * qty * self.cfg["commission_perc"]
+                    pnl = (exit_px - entry_px) * qty - commission - self.trades[-1]["entry_commission"]
+                    equity += pnl
+                    self.trades[-1].update({
+                        "exit_dt": dt, "exit_px": exit_px, "exit_commission": commission,
+                        "pnl": pnl, "exit_reason": exit_flag
+                    })
+                    position = 0
+                    entry_px = stop_px = qty = np.nan
+
             equity_curve.append((dt, equity))
 
         self.equity_curve = pd.DataFrame(equity_curve, columns=["datetime", "equity"]).set_index("datetime")
@@ -300,29 +211,26 @@ class TripleScreenBacktester:
     # ---------------------------------------------------------
     def stats(self):
         trades = pd.DataFrame(self.trades)
-        closed = trades.dropna(subset=["exit_dt"]).copy()
+        closed = trades.dropna(subset=["exit_dt"])
         if closed.empty:
             print("No completed trades.")
             return
         total_return = (self.equity_curve.iloc[-1].equity / self.cfg["initial_capital"] - 1) * 100
-        win_trades = closed[closed.pnl > 0]
-        loss_trades = closed[closed.pnl <= 0]
-        win_rate = len(win_trades) / len(closed) * 100
-        avg_win = win_trades.pnl.mean() if not win_trades.empty else 0
-        avg_loss = loss_trades.pnl.mean() if not loss_trades.empty else 0
-        expectancy = (win_rate/100) * avg_win + ((100-win_rate)/100) * avg_loss
+        win_rate = (closed.pnl > 0).mean() * 100
+        avg_win = closed.loc[closed.pnl > 0, "pnl"].mean()
+        avg_loss = closed.loc[closed.pnl <= 0, "pnl"].mean()
+        expectancy = (win_rate/100) * avg_win + (1 - win_rate/100) * avg_loss
 
-        print("\n--- BACK‑TEST SUMMARY ---")
+        print("\n--- BACK‑TEST SUMMARY (long‑only, soft‑trailing) ---")
         print(f"Trades executed      : {len(closed)}")
-        print(f"Win rate             : {win_rate:.1f}%")
+        print(f"Win rate             : {win_rate:.1f} %")
         print(f"Average win          : {avg_win:,.2f}")
         print(f"Average loss         : {avg_loss:,.2f}")
         print(f"Expectancy per trade : {expectancy:,.2f}")
-        print(f"Total return         : {total_return:,.2f}%")
-        # Save trades & equity
+        print(f"Total return         : {total_return:,.2f} %")
+
         closed.to_csv("trades.csv", index=False)
         self.equity_curve.to_csv("equity_curve.csv")
-        # Equity plot
         self.equity_curve.equity.plot(title="Equity Curve", figsize=(10, 4))
         plt.tight_layout()
         plt.savefig("equity_curve.png", dpi=150)
